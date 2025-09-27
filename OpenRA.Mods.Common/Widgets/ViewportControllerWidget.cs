@@ -190,7 +190,8 @@ namespace OpenRA.Mods.Common.Widgets
 				var rate = 0.01f * Game.Settings.Game.ViewportEdgeScrollStep;
 
 				var scroll = (joystickScrollEnd.Value - joystickScrollStart.Value).ToFloat2() * rate;
-				worldRenderer.Viewport.Scroll(scroll, false);
+				if (scroll != float2.Zero)
+					worldRenderer.Viewport.Scroll(scroll, false);
 			}
 			else if (!isStandardScrolling)
 			{
@@ -214,8 +215,9 @@ namespace OpenRA.Mods.Common.Widgets
 
 					var length = Math.Max(1, scroll.Length);
 					scroll *= deltaScale / (25 * length) * Game.Settings.Game.ViewportEdgeScrollStep;
+					if (scroll != float2.Zero)
+						worldRenderer.Viewport.Scroll(scroll, false);
 
-					worldRenderer.Viewport.Scroll(scroll, false);
 					lastScrollTime = Game.RunTime;
 				}
 			}
@@ -335,7 +337,10 @@ namespace OpenRA.Mods.Common.Widgets
 				{
 					isStandardScrolling = true;
 					var d = scrollType == MouseScrollType.Inverted ? -1 : 1;
-					worldRenderer.Viewport.Scroll((Viewport.LastMousePos - mi.Location) * d, false);
+					var scroll = (Viewport.LastMousePos - mi.Location) * d;
+					if (scroll != float2.Zero)
+						worldRenderer.Viewport.Scroll(scroll, false);
+
 					return true;
 				}
 				else if (mi.Event == MouseInputEvent.Up)
