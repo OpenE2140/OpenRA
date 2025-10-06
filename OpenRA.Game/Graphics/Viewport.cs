@@ -42,6 +42,8 @@ namespace OpenRA.Graphics
 
 	public class Viewport
 	{
+		public event Action ViewportChanged;
+
 		readonly WorldRenderer worldRenderer;
 		readonly WorldViewportSizes viewportSizes;
 		readonly GraphicSettings graphicSettings;
@@ -51,7 +53,18 @@ namespace OpenRA.Graphics
 		readonly Size tileSize;
 
 		// Viewport geometry (world-px)
-		public Vector2 CenterLocation { get; private set; }
+		Vector2 centerLocation;
+		public Vector2 CenterLocation
+		{
+			get => centerLocation;
+			private set
+			{
+				ViewportChanged?.Invoke();
+				centerLocation = value;
+				cellsDirty = true;
+				allCellsDirty = true;
+			}
+		}
 
 		public WPos CenterPosition => worldRenderer.ProjectedPosition(int2.FromVector(CenterLocation));
 
