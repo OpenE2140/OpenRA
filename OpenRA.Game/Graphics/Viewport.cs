@@ -70,6 +70,7 @@ namespace OpenRA.Graphics
 		public int2 TopLeft => CenterLocation.ToInt2() - ViewportSize.ToInt2() / 2;
 		public int2 BottomRight => CenterLocation.ToInt2() + ViewportSize.ToInt2() / 2;
 		public Size ViewportSize { get; private set; }
+		public bool IsMovementLocked { get; set; }
 		ProjectedCellRegion cells;
 		bool cellsDirty = true;
 
@@ -85,7 +86,7 @@ namespace OpenRA.Graphics
 		float defaultScale;
 		bool overrideUserScale;
 
-		public Func<float2> ViewportCenterProvider;
+		public Func<float2?> ViewportCenterProvider;
 		public event Action ViewportTick;
 
 		public float Zoom
@@ -117,15 +118,17 @@ namespace OpenRA.Graphics
 			Zoom = (zoom * (float)Math.Exp(dz)).Clamp(unlockMinZoom ? unlockedMinZoom : MinZoom, MaxZoom);
 		}
 
-		public void AdjustZoom(float dz, int2 center)
+		public void AdjustZoom(float dz, int2 center, bool ignoreLock = false)
 		{
 			var oldCenter = worldRenderer.Viewport.ViewToWorldPx(center);
 			AdjustZoom(dz);
 			var newCenter = worldRenderer.Viewport.ViewToWorldPx(center);
 
-			var candidateCenterLocation = CenterLocation + oldCenter - newCenter;
-			if (CenterLocation != candidateCenterLocation)
+			if (!IsMovementLocked || ignoreLock)
+			{
+				var candidateCenterLocation = CenterLocation + oldCenter - newCenter;
 				CenterLocation = candidateCenterLocation.Clamp(mapBounds);
+			}
 		}
 
 		public void ToggleZoom()
@@ -198,10 +201,13 @@ namespace OpenRA.Graphics
 			if (lastViewportDistance != graphicSettings.ViewportDistance)
 				UpdateViewportZooms();
 
-			if (ViewportCenterProvider != null)
-				Center(ViewportCenterProvider());
-
 			ViewportTick?.Invoke();
+			if (ViewportCenterProvider != null)
+			{
+				var pos = ViewportCenterProvider();
+				if (pos.HasValue)
+					Center(pos.Value, true);
+			}
 		}
 
 		static float CalculateMinimumZoom(float minHeight, float maxHeight)
@@ -355,18 +361,27 @@ namespace OpenRA.Graphics
 			Center(actorsCollection.Select(a => a.CenterPosition).Average());
 		}
 
-		public void Center(WPos pos)
+		public void Center(WPos pos, bool ignoreLock = false)
 		{
+			if (IsMovementLocked && !ignoreLock)
+				return;
+
 			CenterLocation = worldRenderer.ScreenPxPosition(pos).Clamp(mapBounds);
 		}
 
-		public void Center(float2 pos)
+		public void Center(float2 pos, bool ignoreLock = false)
 		{
+			if (IsMovementLocked && !ignoreLock)
+				return;
+
 			CenterLocation = worldRenderer.ScreenPosition(pos).Clamp(mapBounds);
 		}
 
-		public void Scroll(float2 delta, bool ignoreBorders)
+		public void Scroll(float2 delta, bool ignoreBorders, bool ignoreLock = false)
 		{
+			if (IsMovementLocked && !ignoreLock)
+				return;
+
 			// Convert scroll delta from world-px to viewport-px
 			var newScroll = CenterLocation + 1f / Zoom * delta;
 			CenterLocation = ignoreBorders ? newScroll : newScroll.Clamp(mapBounds);
