@@ -9,6 +9,7 @@
  */
 #endregion
 
+using System;
 using System.Collections.Immutable;
 using OpenRA.Primitives;
 
@@ -16,6 +17,9 @@ namespace OpenRA
 {
 	public class PlayerReference
 	{
+		[FieldLoader.Ignore]
+		readonly Lazy<TypeDictionary> initDictLazy = Exts.Lazy(() => new TypeDictionary());
+
 		public string Name;
 		public string Palette;
 		public string Bot = null;
@@ -57,8 +61,17 @@ namespace OpenRA
 		public ImmutableArray<string> Allies = [];
 		public ImmutableArray<string> Enemies = [];
 
+		public TypeDictionary Inits => initDictLazy.Value;
+
 		public PlayerReference() { }
-		public PlayerReference(MiniYaml my) { FieldLoader.Load(this, my); }
+		public PlayerReference(MiniYaml my)
+		{
+			FieldLoader.Load(this, my);
+
+			var initsYaml = my.NodeWithKeyOrDefault("Inits");
+			if (initsYaml != null)
+				initDictLazy = Exts.Lazy(() => ActorInitLoader.LoadInits(initsYaml.Value));
+		}
 
 		public override string ToString() { return Name; }
 	}
