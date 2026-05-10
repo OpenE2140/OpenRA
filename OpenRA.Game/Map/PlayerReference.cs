@@ -27,7 +27,6 @@ namespace OpenRA
 		public string Name;
 		public string Palette;
 		public string Bot = null;
-		public string StartingUnitsClass = null;
 		public bool AllowBots = true;
 		public bool Playable = false;
 		public bool Required = false;
@@ -40,13 +39,6 @@ namespace OpenRA
 
 		public bool LockColor = false;
 		public Color Color = Game.ModData.GetOrCreate<DefaultPlayer>().Color;
-
-		/// <summary>
-		/// Sets the "Home" location, which can be used by traits and scripts to e.g. set the initial camera
-		/// location or choose the map edge for reinforcements.
-		/// This will usually be overridden for client (lobby slot) players with a location based on the Spawn index.
-		/// </summary>
-		public CPos HomeLocation = CPos.Zero;
 
 		public bool LockSpawn = false;
 
