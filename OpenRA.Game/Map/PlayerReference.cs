@@ -9,13 +9,21 @@
  */
 #endregion
 
+using System.Collections.Frozen;
 using System.Collections.Immutable;
+using System.Linq;
 using OpenRA.Primitives;
 
 namespace OpenRA
 {
 	public class PlayerReference
 	{
+		static readonly PlayerReference Empty = new();
+		static readonly FrozenSet<string> ReservedFields = FieldLoader.GetTypeLoadInfo(typeof(PlayerReference)).Select(l => l.Field.Name).ToFrozenSet();
+
+		[FieldLoader.Ignore]
+		readonly ActorReference actorReference = new(SystemActors.Player.ToString(), new MiniYaml(""));
+
 		public string Name;
 		public string Palette;
 		public string Bot = null;
@@ -57,9 +65,29 @@ namespace OpenRA
 		public ImmutableArray<string> Allies = [];
 		public ImmutableArray<string> Enemies = [];
 
+		public TypeDictionary Inits => actorReference.InitDict;
+
 		public PlayerReference() { }
-		public PlayerReference(MiniYaml my) { FieldLoader.Load(this, my); }
+		public PlayerReference(MiniYaml my)
+		{
+			FieldLoader.Load(this, my);
+
+			var initsYaml = new MiniYaml("", my.Nodes.Where(n => !ReservedFields.Contains(n.Key)));
+			actorReference = new ActorReference(SystemActors.Player.ToString(), initsYaml);
+		}
 
 		public override string ToString() { return Name; }
+
+		public MiniYaml ToMiniYaml()
+		{
+			var yaml = FieldSaver.SaveDifferences(this, Empty);
+			if (actorReference.InitDict.Any())
+			{
+				var inits = actorReference.Save();
+				yaml = yaml.WithNodesAppended(inits.Nodes);
+			}
+
+			return yaml;
+		}
 	}
 }
