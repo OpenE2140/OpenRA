@@ -401,26 +401,82 @@ namespace OpenRA.Mods.Common.Traits
 			var mobile = clientActor.TraitOrDefault<Mobile>();
 			if (mobile != null)
 			{
+				bool IsDockOccupied(CPos dockLocation, Func<Actor, bool> condition)
+				{
+					condition ??= a => a != clientActor;
+					return clientActor.World.ActorMap.AnyActorsAt(dockLocation, SubCell.FullCell, condition);
+				}
+
 				// Overlapping hosts can become hidden.
 				var lookup = docks
-					.AggregateBy(dock => clientActor.World.Map.CellContaining(dock.Trait.DockPosition), default(TraitPair<IDockHost>), (_, dock) => dock)
-					.ToDictionary();
+					.Select(p =>
+					{
+						var dockLocation = p.Actor.World.Map.CellContaining(p.Trait.DockPosition);
+						return new
+						{
+							TraitPair = p,
+							DockHost = p.Trait,
+							DockLocation = dockLocation,
+							IsBlockedByImmovable = IsDockOccupied(dockLocation, a => !a.Info.HasTraitInfo<IMoveInfo>()),
+							IsBlockedByMovable = IsDockOccupied(dockLocation, a => a.Info.HasTraitInfo<IMoveInfo>()),
+						};
+					})
+					.GroupBy(dock => dock.DockLocation)
+					.ToDictionary(group => group.Key, group => group.First());
+				var adjacentDocks = lookup.Values
+					.Where(d => (d.DockLocation - clientActor.Location).LengthSquared == 1)
+					.ToList();
+
+				// Avoid expensive pathfinding, if there's an available dock adjacent to client actor.
+				// This also avoids issue with pathfinder not calling customCost for adjacent cells.
+				var adjacentAvailableDock = adjacentDocks.FirstOrDefault(d => !IsDockOccupied(d.DockLocation, a => a != clientActor));
+				if (adjacentAvailableDock != default)
+					return adjacentAvailableDock.TraitPair;
+
+				// Don't search for path to docks adjacent to client actor, pathfinder always returns these (even if dock cells are blocked).
+				foreach (var dock in adjacentDocks)
+					lookup.Remove(dock.DockLocation);
+
+				var blockedBy = BlockedByActor.None;
+				if (lookup.Keys.Any(c => (clientActor.Location - c).LengthSquared < 3 * 3))
+					blockedBy = BlockedByActor.Stationary;
 
 				// Start a search from each client actor:
+				// TODO: ideally there should be variant of FindPathToTargetCells() which would accept predicate like
+				// FindPathToTargetCellByPredicate() does.
 				var path = mobile.PathFinder.FindPathToTargetCells(
-					clientActor, clientActor.Location, lookup.Keys, BlockedByActor.None,
+					clientActor, clientActor.Location, lookup.Keys, blockedBy,
 					location =>
 					{
-						if (!lookup.TryGetValue(location, out var dock))
+						if (!lookup.TryGetValue(location, out var dockCandidate))
 							return 0;
 
 						// Prefer docks with less occupancy (multiplier is to offset distance cost):
 						// TODO: add custom weights. E.g. owner vs allied.
-						return dock.Trait.ReservationCount * client.OccupancyCostModifier;
+						var expectedOccupancy = dockCandidate.DockHost.ReservationCount;
+
+						// If the client is close to the dock location and the dock is currently occupied,
+						// increase the cost to avoid a possibility of getting stuck.
+						if (dockCandidate.IsBlockedByMovable && (clientActor.Location - location).LengthSquared <= 3 * 3)
+							expectedOccupancy++;
+
+						var cost = expectedOccupancy * client.OccupancyCostModifier;
+
+						// Add really high cost to docks occupied by immovable actors.
+						// This should make client actors avoid such docks as hard as possible, but not forbid them completely.
+						// If no other dock is available, it's better to have the client actor at least reach the dock host actor
+						// (even if it's unable to dock with it). Player should decide how to solve the situation.
+						if (dockCandidate.IsBlockedByImmovable)
+							cost += 999_999;
+
+						return cost;
 					});
 
-				if (path.Count > 0)
-					return lookup[path[0]];
+				// If no path was found, fallback to any adjacent dock.
+				if (path.Count == 0)
+					return adjacentDocks.Count > 0 ? adjacentDocks[0].TraitPair : null;
+
+				return lookup[path[0]].TraitPair;
 			}
 			else
 			{
@@ -431,8 +487,6 @@ namespace OpenRA.Mods.Common.Traits
 					.Cast<TraitPair<IDockHost>?>()
 					.FirstOrDefault();
 			}
-
-			return null;
 		}
 	}
 }
