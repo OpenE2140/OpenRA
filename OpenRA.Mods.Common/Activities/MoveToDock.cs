@@ -20,23 +20,28 @@ namespace OpenRA.Mods.Common.Activities
 {
 	public class MoveToDock : Activity
 	{
+		const int MaxBlockedMoves = 3;
+
 		readonly DockClientManager dockClient;
-		Actor dockHostActor;
-		IDockHost dockHost;
+		readonly IDockHost originalDockHost;
 		readonly INotifyDockClientMoving[] notifyDockClientMoving;
 		readonly Color? dockLineColor;
 		readonly MoveCooldownHelper moveCooldownHelper;
 		readonly bool forceEnter;
 		readonly bool ignoreOccupancy;
-
+		Actor dockHostActor;
+		IDockHost dockHost;
 		bool dockingCancelled;
+		int blockedMoveAttempts;
+		IDockHost lastMoveHost;
+		IDockHost lastFailedDockHost;
 
 		public MoveToDock(Actor self, Actor dockHostActor = null, IDockHost dockHost = null,
 			bool forceEnter = false, bool ignoreOccupancy = false, Color? dockLineColor = null)
 		{
 			dockClient = self.Trait<DockClientManager>();
 			this.dockHostActor = dockHostActor;
-			this.dockHost = dockHost;
+			this.dockHost = originalDockHost = dockHost;
 			this.forceEnter = forceEnter;
 			this.ignoreOccupancy = ignoreOccupancy;
 			this.dockLineColor = dockLineColor;
@@ -82,7 +87,17 @@ namespace OpenRA.Mods.Common.Activities
 			// Find the nearest DockHost if not explicitly ordered to a specific dock.
 			if (dockHost == null || !dockHost.IsEnabledAndInWorld)
 			{
-				var host = dockClient.ClosestDock(null);
+				TraitPair<IDockHost>? host;
+				if (dockHostActor?.IsDead == false)
+				{
+					host = dockClient.AvailableDockHosts(dockHostActor, default, forceEnter, ignoreOccupancy)
+						.ClosestDock(self, dockClient);
+				}
+				else
+				{
+					host = dockClient.ClosestDock(lastFailedDockHost);
+				}
+
 				if (host.HasValue)
 				{
 					dockHost = host.Value.Trait;
@@ -90,7 +105,7 @@ namespace OpenRA.Mods.Common.Activities
 				}
 				else
 				{
-					// No docks exist; check again after delay defined in dockClient.
+					// No docks exist; wait and check again later.
 					QueueChild(new Wait(dockClient.Info.SearchForDockDelay));
 					return false;
 				}
@@ -104,6 +119,31 @@ namespace OpenRA.Mods.Common.Activities
 			{
 				if (dockHost.QueueMoveActivity(this, dockHostActor, self, dockClient, moveCooldownHelper))
 				{
+					if (lastMoveHost == dockHost)
+						blockedMoveAttempts++;
+					else
+					{
+						lastMoveHost = dockHost;
+						blockedMoveAttempts = 1;
+					}
+
+					if (blockedMoveAttempts > MaxBlockedMoves)
+					{
+						blockedMoveAttempts = 0;
+						dockClient.UnreserveHost();
+
+						// Canceling any child activity is necessary, because at this point QueueMoveActivity has already queued a Move activity,
+						// which could succeed by the time MoveToDock.Tick() is called again and due to dockHost reset,
+						// a new one is found and thus the client actor can be redirected.
+						ChildActivity?.Cancel(self);
+
+						// Try finding another dock host only if consumer/caller of MoveToDock hasn't specified dock host.
+						lastFailedDockHost = originalDockHost == null ? dockHost : null;
+						dockHost = null;
+						lastMoveHost = null;
+						return false;
+					}
+
 					foreach (var ndcm in notifyDockClientMoving)
 						ndcm.MovingToDock(self, dockHostActor, dockHost);
 
@@ -115,6 +155,21 @@ namespace OpenRA.Mods.Common.Activities
 			}
 			else
 			{
+				// Try finding another dock host only if consumer/caller of MoveToDock hasn't specified dock host.
+				if (originalDockHost == null)
+				{
+					var alternativeDock = dockClient.AvailableDockHosts(dockHostActor, default, forceEnter, ignoreOccupancy)
+						.ClosestDock(self, dockClient);
+
+					if (alternativeDock.HasValue && alternativeDock.Value.Trait != dockHost)
+					{
+						dockClient.UnreserveHost();
+						dockHost = alternativeDock.Value.Trait;
+						dockHostActor = alternativeDock.Value.Actor;
+						return false;
+					}
+				}
+
 				foreach (var ndcm in notifyDockClientMoving)
 					ndcm.MovementCancelled(self);
 
